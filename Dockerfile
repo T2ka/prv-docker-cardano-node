@@ -1,29 +1,22 @@
-FROM ubuntu:18.04
+FROM fretlink/nix
 
-RUN apt-get update &&\
-   apt-get install -y git curl bzip2 nginx sudo nano &&\
-   useradd -ms /bin/bash cardano &&\
-   mkdir -m 0755 /nix &&\
-   chown cardano /nix &&\
-   mkdir -p /etc/nix &&\
-   echo binary-caches = https://cache.nixos.org https://hydra.iohk.io > /etc/nix/nix.conf &&\
-   echo binary-cache-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= >> /etc/nix/nix.conf &&\
-   su - cardano -c 'git clone https://github.com/input-output-hk/cardano-sl.git /home/cardano/cardano-sl'
+RUN nix-channel --add https://nixos.org/channels/nixpkgs-unstable nixpkgs
+RUN nix-channel --update
+USER root
+RUN apk update &&\
+    apk add --no-cache git curl bzip2 bash openssl &&\
+    # addgroup nixuser root &&\
+    chown nixuser /nix
+ADD nix.conf /etc/nix/
+RUN su - nixuser -c 'git clone https://github.com/input-output-hk/cardano-sl.git /home/nixuser/cardano-sl'
+USER nixuser
+ENV USER nixuser
 
-ADD default.conf /etc/nginx/conf.d/
+WORKDIR /home/nixuser/cardano-sl
+RUN git checkout tags/2.0.1
 
-ADD start-cardano-container.sh /home/cardano/cardano-sl/
-RUN chmod a+x /home/cardano/cardano-sl/start-cardano-container.sh
+RUN nix-build -A cardano-sl-node-static --cores 0 --max-jobs 2 --no-build-output --out-link master
+RUN nix-build -A connectScripts.mainnet.wallet -o connect-to-mainnet
 
-RUN echo "cardano ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
-
-USER cardano
-ENV USER cardano
-RUN curl https://nixos.org/nix/install | sh
-
-WORKDIR /home/cardano/cardano-sl
-RUN git checkout tags/1.3.0
-RUN . /home/cardano/.nix-profile/etc/profile.d/nix.sh &&\
-   nix-build -A connectScripts.mainnet.wallet -o connect-to-mainnet
-    
-CMD /home/cardano/cardano-sl/start-cardano-container.sh
+USER root
+CMD ./connect-to-mainnet --no-tls
